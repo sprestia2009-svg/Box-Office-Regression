@@ -1,0 +1,270 @@
+---
+title: "Determinants of Movie Box Office Revenue"
+author: "Sebastian Prestia"
+date: "2025-11-18"
+output: pdf_document
+---
+
+```{r echo = F, warning = F, message = F}
+library(car) ## checking for multicollinearity
+library(MASS) ## for StepAIC
+```
+
+# Introduction
+
+### Abstract 
+
+In this paper, I develop a Multiple Linear Regression (MLR) model to investigate the key factors influencing a movie’s box office revenue. Understanding the determinants of box office success is a big interest of movie producers who want to make sure they only spend on the right movie. By examining relationships between a movie’s characteristics—such as genre, budget, and release timing, we can possibly suggest a new metric which producers can use to predict movie success. 
+
+Hypothesis:
+1) Most of my explanatory variables will predict the variance in Box Office to a reasonable degree
+2) Sequel and Critic Score will have major effects on Box Office, as better movies should do better at the box office and sequels' are mainly made just to make money
+3) The Run time and Critic Score of a movie probably depend on the Season when contributing to Box Office, as some people may want shorter, better movies during work months, and more willing to take risks and watch longer movies during breaks
+4) Movies Rated PG and PG-13 should do better than those rated R since they are more inclusive
+
+### Dataset
+```{r echo = F, warning = F, message = F}
+df = read.csv("C:\\Users\\spres\\OneDrive\\Documents\\STP311 Final\\data_final.csv")
+df <- subset(df, select = -index) ## Gets rid of index Column
+
+for (i in 1:nrow(df)){
+     df[i,"Movie.Name"] = ifelse(substr(df[i,"Movie.Name"],nchar(df[i,"Movie.Name"]) - 0, nchar(df[i,"Movie.Name"])) == "\n", substr(df[i,"Movie.Name"], 1, nchar(df[i,"Movie.Name"]) - 1), df[i,"Movie.Name"])
+} ## Gets rid of any Movie.Name which ends with a "\n", as this breaks SAS output
+
+cpi_values <- c(172.2, 177.1, 179.9, 184.0, 188.9, 195.3, 201.6, 207.3, 215.3, 214.5, 218.1, 224.9, 229.6, 233.0, 236.7, 237.0, 240.0, 245.1, 251.1, 255.7, 258.8, 271.0, 292.7, 304.7, 313.7)
+
+cpi_multiplyer = 313.7 / cpi_values[(df["Year"] - 1999)$Year] ## Gets CPI Multiplier for every Year, with the reference Year = 2024
+df$Budget = df$Budget * cpi_multiplyer ## Adjusting for Inflation
+df$Box.Office = df$Box.Office * cpi_multiplyer ## Adjusting for Inflation
+
+names(df) = c("Movie.Name","Year","Season","Run.Time","Budget","Box.Office","Genre" ,"MPAA.Rating","Critic.Score","Sequel")
+```
+
+The dataset I will be using is made up of webscraped data of American Movies from both wikipedia.org and themoviedb.org. Both these sources contain reliable information on movies.
+
+\vspace{0.5cm}
+**Movie.Name**  --> Movie Title
+
+Example:
+```{r echo = F, warning = F, message = F}
+str(df$Movie.Name)
+```
+\vspace{0.5cm}
+**Year**  --> Movie Release Year (2000 to 2024)
+\vspace{0.5cm}
+
+**Season** --> Movie Release Season
+```{r echo = F, warning = F, message = F}
+table(df$Season)
+```
+\vspace{0.5cm}
+**Run.Time** --> Movie Run Time (Minutes)
+
+Summary Statistics:
+```{r echo = F, warning = F, message = F}
+summary(df$Run.Time)
+```
+\vspace{0.5cm}
+**Budget** --> Real Movie Production Budget (in 2024 US Dollars)
+
+Summary Statistics:
+```{r echo = F, warning = F, message = F}
+summary(df$Budget)
+```
+\vspace{0.5cm}
+**Genre** --> Movie Genre
+```{r echo = F, warning = F, message = F}
+table(df$Genre)
+```
+\vspace{0.5cm}
+**MPAA.Rating** --> Movie MPAA Rating 
+```{r echo = F, warning = F, message = F}
+table(df$MPAA.Rating)
+```
+\vspace{0.5cm}
+**Sequel** --> Movie Sequel Status 
+```{r echo = F, warning = F, message = F}
+table(df$Sequel)
+```
+
+Note: Sequel includes remakes as well. For instance, A Star is Born (2018) has a sequel status of 1 because, despite not being a sequel, it is a remake of the 1976 movie.
+\vspace{0.5cm}
+
+**Critic.Score** --> Movie Critic Score (0 to 100)
+Summary Statistics:
+```{r echo = F, warning = F, message = F}
+summary(df$Critic.Score)
+```
+\vspace{0.5cm}
+**Box.Office** --> Real Movie Box Office (in 2024 US Dollars)
+
+Summary Statistics:
+```{r echo = F, warning = F, message = F}
+summary(df$Box.Office)
+```
+
+\vspace{1cm}
+
+
+As a result of the limited observations in certain levels of the categorical variables Genre and MPAA.Rating, I will group observations in similar levels, and any sufficiently small level that cannot be group will be put into "Other".
+
+```{r echo = F, warning = F, message = F}
+df$Adjusted.MPAA.Rating = df$MPAA.Rating
+df[df["Adjusted.MPAA.Rating"] == "G", "Adjusted.MPAA.Rating"] = "PG"      ## Group G into PG
+df[df["Adjusted.MPAA.Rating"] == "NC-17", "Adjusted.MPAA.Rating"] = "R"   ## Group NC-17 into R
+
+df$Adjusted.Genre = df$Genre
+df[df["Adjusted.MPAA.Rating"] == "G", "Adjusted.MPAA.Rating"] = "PG"      ## Group G into PG
+df[df["Adjusted.MPAA.Rating"] == "NC-17", "Adjusted.MPAA.Rating"] = "R"   ## Group NC-17 into R
+
+
+counts = table(df$Genre)[df["Genre"]$Genre]
+df[counts < 15,"Adjusted.Genre"] = "Other"                                ## Make all Genres with fewer than 15                                                                                      observations part of the "Other" Class
+```
+
+**Adjusted_MPAA.Rating**
+```{r echo = F, warning = F, message = F}
+table(df$Adjusted.MPAA.Rating)
+```
+
+**Adjusted_Genre**
+   
+```{r echo = F, warning = F, message = F}
+table(df$Adjusted.Genre)
+```
+
+
+A log transform was determined to be necessary for both Budget and Box.Office, resulting in the new columns Log.Budget and Log.Box.Office, respectively.
+
+Here is a histogram of the new Log.Box.Office:
+```{r echo = F, warning = F, message = F, fig.align= "center"}
+hist(log(df$Box.Office), breaks = 30, main = "Histogram of Log.Box.Office", xlab = "Log.Box.Office")
+```
+
+A big spread of data, with a few gaps. This could suggest that the data is bimodial, but it may also just be a quirk of the smaller sample size.
+
+# Model Fitting
+
+I will fit a Multiple Linear Regression (MLR) model with regularization to predict Box.Office against all the explanatory variables (e.g., all variables except for Move.Name, Year, and Box.Office). I will choose to include the interaction terms Season & Run.Time and Season & Critic Score to follow through with my hypothesis.
+
+```{r echo = F, warning = F, message = F}
+write.csv(df, "C:\\Users\\spres\\OneDrive\\Documents\\STP311 Final\\SAS_df.csv", row.names = F) ## For getting SAS plots
+```
+
+```{r echo = F, warning = F, message = F}
+## This just gets data prepared for model training
+
+df$Log.Box.Office = log(df$Box.Office)
+df$Log.Budget = log(df$Budget)
+
+model_df = df[,c("Movie.Name", "Year", "Season", "Run.Time", "Critic.Score", "Sequel", "Log.Budget", "Adjusted.MPAA.Rating", "Adjusted.Genre", "Log.Box.Office")] ## makes simpler for SAS plotting and not editting original data with factors
+
+write.csv(model_df, "C:\\Users\\spres\\OneDrive\\Documents\\STP311 Final\\SAS_df.csv", row.names = F) ## For getting SAS plots
+model_df$Season = relevel(as.factor(model_df$Season), ref = "Spring")
+model_df$Sequel = relevel(as.factor(model_df$Sequel), ref = "0")
+model_df$Adjusted.MPAA.Rating = relevel(as.factor(model_df$Adjusted.MPAA.Rating), ref = "PG")
+model_df$Adjusted.Genre = relevel(as.factor(model_df$Adjusted.Genre), ref = "Action")
+
+tr_data = model.matrix(~. -Movie.Name - Year - Log.Box.Office + Season : Run.Time + Season : Critic.Score, data = model_df)[,-1]
+```
+
+Before we train our model, we should check if there are multicollinearity issues in our dataset:
+```{r echo = F, warning = F, message = F}
+vif(lm(Log.Box.Office ~. -Movie.Name - Year, data=model_df))
+```
+
+Fortunately there is no multicollinearity in our data. 
+
+Now we will train our model. As I said earlier, I will be using an MLR, and I will be using Ridge Regularization, partly because the full fitted model had coefficients about the same scale, so Ridge will be better than Lasso.
+
+Also, I have decided on the reference level of Season to be Spring, Sequel to be 0, Adjusted.MPAA.Rating to be PG, and the Adjusted.Genre to be Action. 
+
+```{r echo = F, warning = F, message = F}
+library(glmnet)
+
+cv_ridge = cv.glmnet(tr_data, df$Log.Box.Office, alpha = 0)
+
+cv_ridge$cvm[cv_ridge$lambda == cv_ridge$lambda.min]
+
+pred <- predict(cv_ridge, newx = tr_data, s = "lambda.min")
+
+y <- df$Log.Box.Office
+
+rss <- sum((y - pred)^2)
+tss <- sum((y - mean(y))^2)
+R2 <- 1 - rss/tss
+print(paste("R^2",R2))
+```
+
+Choosing the optimal lambda based on least k-cv, on average, the prediction is off by 2.54844933 Log.Box.Office. The $R^2$ of about 0.45 is normally ok, but for Box.Office this is very very good, as movie Box Office is notoriously hard to predict, so this means that our model is doing quite well.
+
+## Model Adequacy Testing
+Now that we've seen the model, let's test the linearity assumptions.
+
+![]("C:\\Users\\spres\\OneDrive\\Documents\\STP311 Final\\Plots_After_Model.png")
+
+### Linearity
+
+If our data is linear, then the residual plot should be mostly random scatter with no function-like trends in the data (e.g., no quadratic / cubic shapes of residuals).
+
+The residual plot does not seem to have any real function-like trends, and has a big clump at around 18 which seems to be randomly scattered about y = 0. Because of this, I think that the linearity assumption may still hold.
+
+### Normality of Residuals
+
+If the errors in our data are normally distributed, then the residual Q-Q plot should be about a straight line.
+
+The residual Q-Q plot seems to be heavy-tailed, which is a different distribution from the required normal distribution. Because of this, it is probably better to use a general linear model that does not require normality of residuals.
+
+### Constant Variance of Residuals
+
+If our data has constant variance, then the residual plot should be mostly random scatter with no "funnel patterns".
+
+It is hard to say whether there is a funneling pattern or not. There are a lot of points which seem like outliers that should not be included in this analysis. There does seem to be some change in variance, as the mass of points appears to move upward slightly, so it likely fails the homoscedastic assumption.
+
+### Independence
+
+Independence is the only requirement which cannot really be checked by looking at a plot. We know from our data that some movie box offices can be dependent on others, especially if they hit theatres at around the same time. Because of this, a linear mixer model would probably be a better fit than an MLR.
+
+### Outliers / Influential Points
+
+This is not really a requirement, but more of a way of checking whether our model is a good fit or not. 
+
+In the residual plot, there seems to be two groups of outliers: one high above at about 17, the other well below at about 25. While each of these points only has a Cook's Distance of about 0.09, this makes sense due to the sheer number of outliers concentrated in a single area, thus the removal of one will not make a huge difference. Having this many outliers suggests that our model may be missing some extra information, like other explanatory variables. These variables are probably things related to publicity, like star power or money spent toward advertising.
+
+
+In total, our model does not seem to be the best fit for this data. For future analysis, I would advise using a Generalized Linear Mixer Model (GLMM) with more predictors-perhaps those focused on publicity, such as star power and advertising budget—for then the non-normal residuals, correlated observations, and changing variance of errors would not be a problem, and our model would likely have much fewer outliers, fitting the data better.
+
+
+Even though our model is inadequate, let's try to interpret its predictions, as it can still provide some insight into relationships among variables.
+
+## Model Interpretation
+
+If we are going to interpret the coefficients of our model, we should check for multicollinearity in the dataset. Even though ridge regularization can handle multicollinearity quite well, extreme multicollinearity can make the coefficients useless for interpreting.
+
+Fortunately, the multicollinearity in our dataset is weak, so we can interpret the coefficients of our model.
+
+### Coefficients
+
+```{r echo = F, warning = F, message = F}
+library(glmnet)
+
+cv_ridge = cv.glmnet(tr_data, df$Log.Box.Office, alpha = 0)
+
+coef(cv_ridge, s = "lambda.min")
+```
+
+The intercept here does not have a meaning, as a movie cannot have 0 budget (we are not modeling indie films).
+
+Most of the factors here have decently sized coefficients, meaning that most of them are useful in the prediction of Log.Box.Office. I am particularly suprised by how significant a lot of the levels for Genre appear to be. Movies that are rated R somehow have an expected exp(0.51)% = 1.66 times higher Box.Office than those rated PG, on average and controlling for all else, which complete contradicts my 4th hypothesis on inclusivity. 
+
+Budget is a huge predictor, with a 1% increase in Budget causing an expected 0.6888185128% increase in Box.Office, controlling for all else. My hypothesis on sequels seemed to be correct, as movies with a sequel status = 1 have an expected 10.54% higher Box Officer than those with a sequel status = 0, on average, but critic scores seem to have a negligible effect. All my interaction terms do seem insignificant too, except for the interaction between Summer and Critic Score, where a 1 increase in Critic Score causes an expected 0.64% decrease in Box.Office, on average controlling for everything else, when compared to the Spring Season interaction.
+
+
+What I find most interesting is how the quality of a movie, such as the Run.Time and the Critic.Score, have little impact on the Box.Office, whereas some Genres really seem very significant like a Romance Movie having an expected 57% decrease in Box.Office compared to Action (reference level) movies, on average controlling for all else. It seems a lot like the actual marketing of a movie matters more than anything else, which I guess should be obvious. Based on this, I think the reason why Budget has such a huge effect may be because it is correlated with marketing budget.
+
+
+## Conclusion
+
+In this paper, we developed a Ridge MLR model to predict a movie's Box Office revenue using a log scale for both Box Office and Movie Budget. This model achieved a moderate predictive capability, with an $R^2$ value of approximately 0.45, which is actually very good given the notoriously difficult nature of predicting movie box office success, however, our model was shown to be well inadequate for our data, falling the Normality, Constant Variance, Independence, and Outlier assumptions. 
+
+I found it interesting how my hypotheses were mostly wrong. I really thought that the quality of a movie would make some impact, but I've come to the conclusion that it probably is mostly marketing. For future research, I would suggest using a General Linear Mixer Model to combat the inadequacies which I faced, and to include predictory variables relating to publicity, such as advertising budget and star power, as I think that would help explain a lot of the variance in Box.Office.
